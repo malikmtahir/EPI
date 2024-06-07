@@ -1,0 +1,415 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from random import shuffle
+from Bio import SeqIO
+
+import sys
+sys.path.insert(0, '../models/')
+import os
+os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
+from tensorflow.keras.layers import *
+from tensorflow.keras import *
+from tensorflow.keras.models import Model
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
+from keras.regularizers import l2 
+import tensorflow.keras
+import tensorflow as tf
+from tensorflow.keras.optimizers import SGD, Adam, RMSprop
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, LearningRateScheduler, CSVLogger
+from tensorflow.keras.models import model_from_json
+from tensorflow.keras.models import model_from_yaml
+
+from tensorflow.keras import layers
+
+import numpy as np
+import h5py
+import scipy.io
+np.random.seed(1337) # for reproducibility
+
+from tensorflow.keras.layers import *
+from tensorflow.keras.layers import Input,Conv1D, Dense,LSTM, MaxPooling1D, Flatten, Dropout, BatchNormalization, Activation,AveragePooling1D
+from tensorflow.keras import *
+#from group_norm import GroupNormalization
+from tensorflow.keras.models import Model
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping,ReduceLROnPlateau
+from tensorflow.keras.regularizers import l2 ,l1
+import keras
+from tensorflow.keras.initializers import RandomUniform
+import keras.backend as K
+from random import shuffle
+from sklearn.utils import class_weight
+from tcn import TCN
+
+
+#from  pyfasta import Fasta
+import gzip
+import numpy as np
+import re
+import random
+#from data_gen import  DataGenerator_safe
+
+
+print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
+import tensorflow as tf
+print("Num of GPUs available: ", len(tf.test.gpu_device_name()))
+
+enh_pos_seq = []
+for seq_record in SeqIO.parse('GM12878_FOLD_TEST-TRAN_LeftOut_chr1/Enhancer-chr1-pos-TRAIN.txt', "fasta"):
+    enh_pos_seq.append(str(seq_record.seq))
+enh_neg_seq = []
+for seq_record in SeqIO.parse('GM12878_FOLD_TEST-TRAN_LeftOut_chr1/Enhancer-chr1-neg-TRAIN.txt', "fasta"):
+    enh_neg_seq.append(str(seq_record.seq))
+enh_combine_seqs = enh_pos_seq + enh_neg_seq
+    
+############################################################################################################
+
+pro_pos_seq = []
+for seq_record in SeqIO.parse('GM12878_FOLD_TEST-TRAN_LeftOut_chr1/Promoter-chr1-pos-TRAIN.txt', "fasta"):
+    pro_pos_seq.append(str(seq_record.seq))
+pro_neg_seq = []
+for seq_record in SeqIO.parse('GM12878_FOLD_TEST-TRAN_LeftOut_chr1/Promoter-chr1-neg-TRAIN.txt', "fasta"):
+    pro_neg_seq.append(str(seq_record.seq))
+pro_combine_seqs = pro_pos_seq + pro_neg_seq
+
+############################################################################################################
+
+import re
+def get_feature(all_seqs,patterns):
+    all_feat = []
+    for seq in all_seqs:
+        feat= np.zeros((1,len(patterns)))
+        ix=0
+        for ix, pattern in enumerate(patterns):
+            pat='(?='+pattern+')'
+            featcnt=len(re.findall(pat,seq))
+            feat[0,ix] = featcnt
+            ix+=1
+        all_feat.append(feat)
+    return np.asarray(all_feat)
+
+patterns=['AAAAA','AAAAC','AAAAG','AAAAT','AAACA','AAACC','AAACG','AAACT','AAAGA','AAAGC','AAAGG','AAAGT','AAATA','AAATC','AAATG','AAATT','AACAA','AACAC','AACAG','AACAT','AACCA','AACCC','AACCG','AACCT','AACGA','AACGC','AACGG','AACGT','AACTA','AACTC','AACTG','AACTT','AAGAA','AAGAC','AAGAG','AAGAT','AAGCA','AAGCC','AAGCG','AAGCT','AAGGA','AAGGC','AAGGG','AAGGT','AAGTA','AAGTC','AAGTG','AAGTT','AATAA','AATAC','AATAG','AATAT','AATCA','AATCC','AATCG','AATCT','AATGA','AATGC','AATGG','AATGT','AATTA','AATTC','AATTG','AATTT','ACAAA','ACAAC','ACAAG','ACAAT','ACACA','ACACC','ACACG','ACACT','ACAGA','ACAGC','ACAGG','ACAGT','ACATA','ACATC','ACATG','ACATT','ACCAA','ACCAC','ACCAG','ACCAT','ACCCA','ACCCC','ACCCG','ACCCT','ACCGA','ACCGC','ACCGG','ACCGT','ACCTA','ACCTC','ACCTG','ACCTT','ACGAA','ACGAC','ACGAG','ACGAT','ACGCA','ACGCC','ACGCG','ACGCT','ACGGA','ACGGC','ACGGG','ACGGT','ACGTA','ACGTC','ACGTG','ACGTT','ACTAA','ACTAC','ACTAG','ACTAT','ACTCA','ACTCC','ACTCG','ACTCT','ACTGA','ACTGC','ACTGG','ACTGT','ACTTA','ACTTC','ACTTG','ACTTT','AGAAA','AGAAC','AGAAG','AGAAT','AGACA','AGACC','AGACG','AGACT','AGAGA','AGAGC','AGAGG','AGAGT','AGATA','AGATC','AGATG','AGATT','AGCAA','AGCAC','AGCAG','AGCAT','AGCCA','AGCCC','AGCCG','AGCCT','AGCGA','AGCGC','AGCGG','AGCGT','AGCTA','AGCTC','AGCTG','AGCTT','AGGAA','AGGAC','AGGAG','AGGAT','AGGCA','AGGCC','AGGCG','AGGCT','AGGGA','AGGGC','AGGGG','AGGGT','AGGTA','AGGTC','AGGTG','AGGTT','AGTAA','AGTAC','AGTAG','AGTAT','AGTCA','AGTCC','AGTCG','AGTCT','AGTGA','AGTGC','AGTGG','AGTGT','AGTTA','AGTTC','AGTTG','AGTTT','ATAAA','ATAAC','ATAAG','ATAAT','ATACA','ATACC','ATACG','ATACT','ATAGA','ATAGC','ATAGG','ATAGT','ATATA','ATATC','ATATG','ATATT','ATCAA','ATCAC','ATCAG','ATCAT','ATCCA','ATCCC','ATCCG','ATCCT','ATCGA','ATCGC','ATCGG','ATCGT','ATCTA','ATCTC','ATCTG','ATCTT','ATGAA','ATGAC','ATGAG','ATGAT','ATGCA','ATGCC','ATGCG','ATGCT','ATGGA','ATGGC','ATGGG','ATGGT','ATGTA','ATGTC','ATGTG','ATGTT','ATTAA','ATTAC','ATTAG','ATTAT','ATTCA','ATTCC','ATTCG','ATTCT','ATTGA','ATTGC','ATTGG','ATTGT','ATTTA','ATTTC','ATTTG','ATTTT','CAAAA','CAAAC','CAAAG','CAAAT','CAACA','CAACC','CAACG','CAACT','CAAGA','CAAGC','CAAGG','CAAGT','CAATA','CAATC','CAATG','CAATT','CACAA','CACAC','CACAG','CACAT','CACCA','CACCC','CACCG','CACCT','CACGA','CACGC','CACGG','CACGT','CACTA','CACTC','CACTG','CACTT','CAGAA','CAGAC','CAGAG','CAGAT','CAGCA','CAGCC','CAGCG','CAGCT','CAGGA','CAGGC','CAGGG','CAGGT','CAGTA','CAGTC','CAGTG','CAGTT','CATAA','CATAC','CATAG','CATAT','CATCA','CATCC','CATCG','CATCT','CATGA','CATGC','CATGG','CATGT','CATTA','CATTC','CATTG','CATTT','CCAAA','CCAAC','CCAAG','CCAAT','CCACA','CCACC','CCACG','CCACT','CCAGA','CCAGC','CCAGG','CCAGT','CCATA','CCATC','CCATG','CCATT','CCCAA','CCCAC','CCCAG','CCCAT','CCCCA','CCCCC','CCCCG','CCCCT','CCCGA','CCCGC','CCCGG','CCCGT','CCCTA','CCCTC','CCCTG','CCCTT','CCGAA','CCGAC','CCGAG','CCGAT','CCGCA','CCGCC','CCGCG','CCGCT','CCGGA','CCGGC','CCGGG','CCGGT','CCGTA','CCGTC','CCGTG','CCGTT','CCTAA','CCTAC','CCTAG','CCTAT','CCTCA','CCTCC','CCTCG','CCTCT','CCTGA','CCTGC','CCTGG','CCTGT','CCTTA','CCTTC','CCTTG','CCTTT','CGAAA','CGAAC','CGAAG','CGAAT','CGACA','CGACC','CGACG','CGACT','CGAGA','CGAGC','CGAGG','CGAGT','CGATA','CGATC','CGATG','CGATT','CGCAA','CGCAC','CGCAG','CGCAT','CGCCA','CGCCC','CGCCG','CGCCT','CGCGA','CGCGC','CGCGG','CGCGT','CGCTA','CGCTC','CGCTG','CGCTT','CGGAA','CGGAC','CGGAG','CGGAT','CGGCA','CGGCC','CGGCG','CGGCT','CGGGA','CGGGC','CGGGG','CGGGT','CGGTA','CGGTC','CGGTG','CGGTT','CGTAA','CGTAC','CGTAG','CGTAT','CGTCA','CGTCC','CGTCG','CGTCT','CGTGA','CGTGC','CGTGG','CGTGT','CGTTA','CGTTC','CGTTG','CGTTT','CTAAA','CTAAC','CTAAG','CTAAT','CTACA','CTACC','CTACG','CTACT','CTAGA','CTAGC','CTAGG','CTAGT','CTATA','CTATC','CTATG','CTATT','CTCAA','CTCAC','CTCAG','CTCAT','CTCCA','CTCCC','CTCCG','CTCCT','CTCGA','CTCGC','CTCGG','CTCGT','CTCTA','CTCTC','CTCTG','CTCTT','CTGAA','CTGAC','CTGAG','CTGAT','CTGCA','CTGCC','CTGCG','CTGCT','CTGGA','CTGGC','CTGGG','CTGGT','CTGTA','CTGTC','CTGTG','CTGTT','CTTAA','CTTAC','CTTAG','CTTAT','CTTCA','CTTCC','CTTCG','CTTCT','CTTGA','CTTGC','CTTGG','CTTGT','CTTTA','CTTTC','CTTTG','CTTTT','GAAAA','GAAAC','GAAAG','GAAAT','GAACA','GAACC','GAACG','GAACT','GAAGA','GAAGC','GAAGG','GAAGT','GAATA','GAATC','GAATG','GAATT','GACAA','GACAC','GACAG','GACAT','GACCA','GACCC','GACCG','GACCT','GACGA','GACGC','GACGG','GACGT','GACTA','GACTC','GACTG','GACTT','GAGAA','GAGAC','GAGAG','GAGAT','GAGCA','GAGCC','GAGCG','GAGCT','GAGGA','GAGGC','GAGGG','GAGGT','GAGTA','GAGTC','GAGTG','GAGTT','GATAA','GATAC','GATAG','GATAT','GATCA','GATCC','GATCG','GATCT','GATGA','GATGC','GATGG','GATGT','GATTA','GATTC','GATTG','GATTT','GCAAA','GCAAC','GCAAG','GCAAT','GCACA','GCACC','GCACG','GCACT','GCAGA','GCAGC','GCAGG','GCAGT','GCATA','GCATC','GCATG','GCATT','GCCAA','GCCAC','GCCAG','GCCAT','GCCCA','GCCCC','GCCCG','GCCCT','GCCGA','GCCGC','GCCGG','GCCGT','GCCTA','GCCTC','GCCTG','GCCTT','GCGAA','GCGAC','GCGAG','GCGAT','GCGCA','GCGCC','GCGCG','GCGCT','GCGGA','GCGGC','GCGGG','GCGGT','GCGTA','GCGTC','GCGTG','GCGTT','GCTAA','GCTAC','GCTAG','GCTAT','GCTCA','GCTCC','GCTCG','GCTCT','GCTGA','GCTGC','GCTGG','GCTGT','GCTTA','GCTTC','GCTTG','GCTTT','GGAAA','GGAAC','GGAAG','GGAAT','GGACA','GGACC','GGACG','GGACT','GGAGA','GGAGC','GGAGG','GGAGT','GGATA','GGATC','GGATG','GGATT','GGCAA','GGCAC','GGCAG','GGCAT','GGCCA','GGCCC','GGCCG','GGCCT','GGCGA','GGCGC','GGCGG','GGCGT','GGCTA','GGCTC','GGCTG','GGCTT','GGGAA','GGGAC','GGGAG','GGGAT','GGGCA','GGGCC','GGGCG','GGGCT','GGGGA','GGGGC','GGGGG','GGGGT','GGGTA','GGGTC','GGGTG','GGGTT','GGTAA','GGTAC','GGTAG','GGTAT','GGTCA','GGTCC','GGTCG','GGTCT','GGTGA','GGTGC','GGTGG','GGTGT','GGTTA','GGTTC','GGTTG','GGTTT','GTAAA','GTAAC','GTAAG','GTAAT','GTACA','GTACC','GTACG','GTACT','GTAGA','GTAGC','GTAGG','GTAGT','GTATA','GTATC','GTATG','GTATT','GTCAA','GTCAC','GTCAG','GTCAT','GTCCA','GTCCC','GTCCG','GTCCT','GTCGA','GTCGC','GTCGG','GTCGT','GTCTA','GTCTC','GTCTG','GTCTT','GTGAA','GTGAC','GTGAG','GTGAT','GTGCA','GTGCC','GTGCG','GTGCT','GTGGA','GTGGC','GTGGG','GTGGT','GTGTA','GTGTC','GTGTG','GTGTT','GTTAA','GTTAC','GTTAG','GTTAT','GTTCA','GTTCC','GTTCG','GTTCT','GTTGA','GTTGC','GTTGG','GTTGT','GTTTA','GTTTC','GTTTG','GTTTT','TAAAA','TAAAC','TAAAG','TAAAT','TAACA','TAACC','TAACG','TAACT','TAAGA','TAAGC','TAAGG','TAAGT','TAATA','TAATC','TAATG','TAATT','TACAA','TACAC','TACAG','TACAT','TACCA','TACCC','TACCG','TACCT','TACGA','TACGC','TACGG','TACGT','TACTA','TACTC','TACTG','TACTT','TAGAA','TAGAC','TAGAG','TAGAT','TAGCA','TAGCC','TAGCG','TAGCT','TAGGA','TAGGC','TAGGG','TAGGT','TAGTA','TAGTC','TAGTG','TAGTT','TATAA','TATAC','TATAG','TATAT','TATCA','TATCC','TATCG','TATCT','TATGA','TATGC','TATGG','TATGT','TATTA','TATTC','TATTG','TATTT','TCAAA','TCAAC','TCAAG','TCAAT','TCACA','TCACC','TCACG','TCACT','TCAGA','TCAGC','TCAGG','TCAGT','TCATA','TCATC','TCATG','TCATT','TCCAA','TCCAC','TCCAG','TCCAT','TCCCA','TCCCC','TCCCG','TCCCT','TCCGA','TCCGC','TCCGG','TCCGT','TCCTA','TCCTC','TCCTG','TCCTT','TCGAA','TCGAC','TCGAG','TCGAT','TCGCA','TCGCC','TCGCG','TCGCT','TCGGA','TCGGC','TCGGG','TCGGT','TCGTA','TCGTC','TCGTG','TCGTT','TCTAA','TCTAC','TCTAG','TCTAT','TCTCA','TCTCC','TCTCG','TCTCT','TCTGA','TCTGC','TCTGG','TCTGT','TCTTA','TCTTC','TCTTG','TCTTT','TGAAA','TGAAC','TGAAG','TGAAT','TGACA','TGACC','TGACG','TGACT','TGAGA','TGAGC','TGAGG','TGAGT','TGATA','TGATC','TGATG','TGATT','TGCAA','TGCAC','TGCAG','TGCAT','TGCCA','TGCCC','TGCCG','TGCCT','TGCGA','TGCGC','TGCGG','TGCGT','TGCTA','TGCTC','TGCTG','TGCTT','TGGAA','TGGAC','TGGAG','TGGAT','TGGCA','TGGCC','TGGCG','TGGCT','TGGGA','TGGGC','TGGGG','TGGGT','TGGTA','TGGTC','TGGTG','TGGTT','TGTAA','TGTAC','TGTAG','TGTAT','TGTCA','TGTCC','TGTCG','TGTCT','TGTGA','TGTGC','TGTGG','TGTGT','TGTTA','TGTTC','TGTTG','TGTTT','TTAAA','TTAAC','TTAAG','TTAAT','TTACA','TTACC','TTACG','TTACT','TTAGA','TTAGC','TTAGG','TTAGT','TTATA','TTATC','TTATG','TTATT','TTCAA','TTCAC','TTCAG','TTCAT','TTCCA','TTCCC','TTCCG','TTCCT','TTCGA','TTCGC','TTCGG','TTCGT','TTCTA','TTCTC','TTCTG','TTCTT','TTGAA','TTGAC','TTGAG','TTGAT','TTGCA','TTGCC','TTGCG','TTGCT','TTGGA','TTGGC','TTGGG','TTGGT','TTGTA','TTGTC','TTGTG','TTGTT','TTTAA','TTTAC','TTTAG','TTTAT','TTTCA','TTTCC','TTTCG','TTTCT','TTTGA','TTTGC','TTTGG','TTTGT','TTTTA','TTTTC','TTTTG','TTTTT']
+
+############################################################################################################
+enh_kmer_feature=get_feature(enh_combine_seqs,patterns)
+pro_kmer_feature=get_feature(pro_combine_seqs,patterns)
+
+############################################################################################################
+
+pro_kmer_feature.shape
+
+############################################################################################################
+
+enh_kmer_feature=enh_kmer_feature/3000.        #Normalize the patteren from 0 to 1..... 41 reprsents the length of sequecne
+pro_kmer_feature=pro_kmer_feature/2000.        #Normalize the patteren from 0 to 1..... 41 reprsents the length of sequecne
+############################################################################################################
+
+bases = ['A','C','G','T']
+def onehot(seq):
+    X = np.zeros((len(seq),len(seq[0]), len(bases)))
+    print(len(seq),len(seq[0]), len(bases))
+    for l,s in enumerate(seq):
+        for i, char in enumerate(s):
+            if char in bases:
+                X[l,i, bases.index(char)] = 1
+    return X
+def shuffle_ab(a,b,c,d,e):
+    s = np.arange(a.shape[0])
+    shuffle(s)
+    return a[s],b[s],c[s],d[s],e[s]
+
+############################################################################################################
+from sklearn.utils import compute_class_weight
+lbs = list(np.ones(len(enh_pos_seq))) + list(np.zeros(len(enh_neg_seq)))
+class_weights = compute_class_weight(
+                                        class_weight = "balanced",
+                                        classes = np.unique(lbs),
+                                        y = lbs                                                    
+                                    )
+class_weights = dict(zip(np.unique(lbs), class_weights))
+class_weights
+
+############################################################################################################
+
+p=list(np.zeros(len(enh_pos_seq))) 
+print(len(p))
+
+############################################################################################################
+enh_features = onehot(enh_combine_seqs)
+enh_features=np.asarray(enh_features,dtype=np.float)
+enh_features.shape
+
+
+############################################################################################################
+pro_features = onehot(pro_combine_seqs)
+pro_features=np.asarray(pro_features,dtype=np.float)
+pro_features.shape
+
+############################################################################################################
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+one_hot_encoder = OneHotEncoder() 
+lbs = np.array(lbs).reshape(-1, 1)
+Input_labels = one_hot_encoder.fit_transform(lbs).toarray()
+Input_labels = np.array(lbs)
+Input_labels.shape
+
+############################################################################################################
+
+enh_features,pro_features,enh_kmer,pro_kmer,Input_labels=shuffle_ab(enh_features,pro_features,enh_kmer_feature,pro_kmer_feature,Input_labels)
+
+############################################################################################################
+
+class CustomModelCheckpoint(keras.callbacks.Callback):
+    def __init__(self, model, path):
+        self.path = path
+        self.model_for_saving = model
+    def on_epoch_end(self, epoch, logs=None):
+        loss = logs['val_loss']
+        print("\nSaving model to : {}".format(self.path.format(epoch=epoch, val_loss=loss)))
+        self.model_for_saving.save_weights(self.path.format(epoch=epoch, val_loss=loss), overwrite=True)
+def step_decay(epoch):
+    lrate=[0.001]*30+[0.0001]*170
+    print (lrate[epoch])
+    return lrate[epoch]
+
+############################################################################################################
+
+model_name= 'EPI'
+result_folder= 'GM12878_FOLD_TEST-TRAN_LeftOut_chr1/results/'
+if not os.path.exists(result_folder+model_name):
+    os.makedirs(result_folder+model_name)
+
+model_results_folder=result_folder+model_name+ '/'
+best_weights = model_results_folder + 'best_weights.h5'
+last_weights = model_results_folder + 'last_weights.h5'
+model_arch = model_results_folder + 'model.jsno'
+history_pth = model_results_folder + 'results.pickle'
+
+############################################################################################################
+
+enh_inp1=Input((3000,4))
+enh_inp2 = Input((1,1024))
+pro_inp1=Input((2000,4))
+pro_inp2 = Input((1,1024))
+
+enh_x1= Conv1D(16,13,strides=2,padding='same',activation = 'relu',kernel_regularizer = regularizers.l2(1e-3),bias_regularizer = regularizers.l2(1e-4),kernel_initializer='random_normal')(enh_inp1)
+enh_x1= Conv1D(32,23,strides=2,padding='same',activation = 'relu',kernel_regularizer = regularizers.l2(1e-3),bias_regularizer = regularizers.l2(1e-4),kernel_initializer='random_normal')(enh_x1)
+enh_x1= MaxPooling1D(pool_size = 40,strides=20)(enh_x1)
+enh_x1 = Dropout(0.5)(enh_x1)
+enh_x1= Flatten()(enh_x1)
+enh_x2= Flatten()(enh_inp2)
+enh_x = concatenate([enh_x1,enh_x2], axis=1)
+enh_x = BatchNormalization()(enh_x)
+enh_x = Dropout(0.5)(enh_x)
+
+pro_x1= Conv1D(16,13,strides=2,padding='same',activation = 'relu',kernel_regularizer = regularizers.l2(1e-3),bias_regularizer = regularizers.l2(1e-4),kernel_initializer='random_normal')(pro_inp1)
+pro_x1= Conv1D(32,23,strides=2,padding='same',activation = 'relu',kernel_regularizer = regularizers.l2(1e-3),bias_regularizer = regularizers.l2(1e-4),kernel_initializer='random_normal')(pro_x1)
+pro_x1= MaxPooling1D(pool_size = 40,strides=20)(pro_x1)
+pro_x1 = Dropout(0.5)(pro_x1)
+pro_x1= Flatten()(pro_x1)
+pro_x2= Flatten()(pro_inp2)
+pro_x = concatenate([pro_x1,pro_x2], axis=1)
+pro_x = BatchNormalization()(pro_x)
+pro_x = Dropout(0.5)(pro_x)
+    
+x = concatenate([enh_x,pro_x], axis=1)
+x=BatchNormalization()(x)
+x= Flatten()(x)
+
+x = Dense(1,activation='sigmoid',kernel_regularizer=l2(0.001),kernel_initializer='he_uniform')(x)
+model= Model(inputs=[enh_inp1,enh_inp2,pro_inp1,pro_inp2],outputs=x)
+
+print (model.summary())
+
+########################################################################################################
+
+if not os.path.exists(result_folder+model_name):
+    os.makedirs(result_folder+model_name)
+
+model_results_folder=result_folder+model_name+ '/'
+history_pth = model_results_folder + 'results.pickle'
+
+########################################################################################################
+
+model_json = model.to_json()
+with open(model_results_folder+"model.json", "w") as json_file:
+    json_file.write(model_json)
+
+checkpoint = ModelCheckpoint(best_weights, monitor='val_acc', verbose=1, save_best_only=False, mode='max')
+
+checkpointsString = model_results_folder + 'weights.{epoch:02d}-{val_loss:.2f}.hdf5'
+lrate = LearningRateScheduler(step_decay)
+callbacks = [lrate, CustomModelCheckpoint(model, checkpointsString),checkpoint]
+
+############################################################################################################
+
+
+opt = Adam(lr=0.002,amsgrad = True)
+model.compile(loss='binary_crossentropy', optimizer=opt, metrics=['accuracy'])
+
+############################################################################################################
+
+history = model.fit([enh_features,enh_kmer,pro_features,pro_kmer],Input_labels,class_weight=class_weights,batch_size=100,epochs=70,shuffle=True, validation_split=0.1,callbacks=callbacks)
+
+############################################################################################################
+
+import pickle
+with open(history_pth, 'wb') as file_pi:
+    pickle.dump(history.history, file_pi)
+
+############################################################################################################
+
+model.load_weights(best_weights)
+
+############################################################################################################
+
+enh_ind_pos = []
+for seq_record in SeqIO.parse('GM12878_FOLD_TEST-TRAN_LeftOut_chr1/Enhancer-chr1-pos-TEST.txt', "fasta"):
+    enh_ind_pos.append(str(seq_record.seq))
+enh_ind_neg = []
+for seq_record in SeqIO.parse('GM12878_FOLD_TEST-TRAN_LeftOut_chr1/Enhancer-chr1-neg-TEST.txt', "fasta"):
+    enh_ind_neg.append(str(seq_record.seq))
+pro_ind_pos = []
+for seq_record in SeqIO.parse('GM12878_FOLD_TEST-TRAN_LeftOut_chr1/Promoter-chr1-pos-TEST.txt', "fasta"):
+    pro_ind_pos.append(str(seq_record.seq))
+pro_ind_neg = []
+for seq_record in SeqIO.parse('GM12878_FOLD_TEST-TRAN_LeftOut_chr1/Promoter-chr1-neg-TEST.txt', "fasta"):
+    pro_ind_neg.append(str(seq_record.seq))
+
+############################################################################################################
+
+enh_ind_comb = enh_ind_pos+enh_ind_neg
+pro_ind_comb = pro_ind_pos+pro_ind_neg
+
+############################################################################################################
+
+enh_ind_features = onehot(enh_ind_comb)
+enh_ind_features=np.asarray(enh_ind_features,dtype=np.float)
+enh_ind_features.shape
+
+############################################################################################################
+
+enh_kmer_ind=get_feature(enh_ind_comb,patterns)
+
+############################################################################################################
+
+pro_ind_features = onehot(pro_ind_comb)
+pro_ind_features=np.asarray(pro_ind_features,dtype=np.float)
+pro_ind_features.shape
+
+############################################################################################################
+
+pro_kmer_ind=get_feature(pro_ind_comb,patterns)
+
+############################################################################################################
+
+enh_kmer_ind=enh_kmer_ind/3000.
+pro_kmer_ind=pro_kmer_ind/2000.
+
+############################################################################################################
+
+lbs = list(np.ones(len(enh_ind_pos))) + list(np.zeros(len(enh_ind_neg)))
+
+############################################################################################################
+
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+one_hot_encoder = OneHotEncoder() 
+lbs = np.array(lbs).reshape(-1, 1)
+Input_labels = one_hot_encoder.fit_transform(lbs).toarray()
+Input_labels = np.array(lbs)
+Input_labels.shape
+
+############################################################################################################
+
+np.save('GM12878_FOLD_TEST-TRAN_LeftOut_chr1/enh_folds/enh_ind_test',enh_ind_features)
+np.save('GM12878_FOLD_TEST-TRAN_LeftOut_chr1/enh_folds/enh_ind_kmer',enh_kmer_ind)
+np.save('GM12878_FOLD_TEST-TRAN_LeftOut_chr1/pro_folds/pro_ind_test',pro_ind_features)
+np.save('GM12878_FOLD_TEST-TRAN_LeftOut_chr1/pro_folds/pro_ind_kmer',pro_kmer_ind)
+np.save('GM12878_FOLD_TEST-TRAN_LeftOut_chr1/enh_folds/ind_y_test',Input_labels)
+
+############################################################################################################
+
+enh_ind_test,pro_ind_test,test_labels=np.load('GM12878_FOLD_TEST-TRAN_LeftOut_chr1/enh_folds/enh_ind_test.npy'),np.load('GM12878_FOLD_TEST-TRAN_LeftOut_chr1/pro_folds/pro_ind_test.npy'), np.load('GM12878_FOLD_TEST-TRAN_LeftOut_chr1/enh_folds/ind_y_test.npy')
+enh_kmer_ind, pro_kmer_ind = np.load('GM12878_FOLD_TEST-TRAN_LeftOut_chr1/enh_folds/enh_ind_kmer.npy'),np.load('GM12878_FOLD_TEST-TRAN_LeftOut_chr1/pro_folds/pro_ind_kmer.npy')
+y_scores= model.predict([enh_ind_test,enh_kmer_ind,pro_ind_test,pro_kmer_ind])
+y_true=test_labels
+
+############################################################################################################
+
+#scikit learn
+from sklearn.metrics import roc_curve
+from sklearn.metrics import roc_auc_score
+from sklearn.metrics import confusion_matrix
+from sklearn.metrics import precision_recall_curve
+from sklearn.metrics import matthews_corrcoef
+from sklearn.metrics import f1_score
+from matplotlib import pyplot as plt
+%matplotlib inline
+#Area under the ROC curve
+fpr, tpr, thresholds = roc_curve((y_true), y_scores)
+AUC_ROC = roc_auc_score(y_true, y_scores)
+# test_integral = np.trapz(tpr,fpr) #trapz is numpy integration
+print ("\nArea under the ROC curve: " +str(AUC_ROC))
+roc_curve =plt.figure()
+plt.plot(fpr,tpr,'-',label='Area Under the Curve (AUC = %0.4f)' % AUC_ROC)
+plt.title('ROC curve')
+plt.xlabel("FPR (False Positive Rate)")
+plt.ylabel("TPR (True Positive Rate)")
+plt.legend(loc="lower right")
+#plt.savefig(path_experiment+"ROC.png")
+plt.savefig('EPI-ROC.png')
+#Precision-recall curve
+precision, recall, thresholds = precision_recall_curve(y_true, y_scores)
+precision = np.fliplr([precision])[0]  #so the array is increasing (you won't get negative AUC)
+recall = np.fliplr([recall])[0]  #so the array is increasing (you won't get negative AUC)
+AUC_prec_rec = np.trapz(precision,recall)
+print ("\nArea under Precision-Recall curve: " +str(AUC_prec_rec))
+prec_rec_curve = plt.figure()
+plt.plot(recall,precision,'-',label='Area Under the Curve (AUC = %0.4f)' % AUC_prec_rec)
+plt.title('Precision - Recall curve')
+plt.xlabel("Recall")
+plt.ylabel("Precision")
+plt.legend(loc="lower right")
+#plt.savefig(path_experiment+"Precision_recall.png")
+
+#Confusion matrix
+threshold_confusion = 0.5
+#print ("\nConfusion matrix:  Custom threshold (for positive) of " +str(threshold_confusion))
+y_pred = np.empty((y_scores.shape[0]))
+for i in range(y_scores.shape[0]):
+    if y_scores[i]>=threshold_confusion:
+        y_pred[i]=1
+    else:
+        y_pred[i]=0
+confusion = confusion_matrix(y_true, y_pred)
+#print (confusion)
+accuracy = 0
+if float(np.sum(confusion))!=0:
+    accuracy = float(confusion[0,0]+confusion[1,1])/float(np.sum(confusion))
+#print ("Global Accuracy: " +str(accuracy))
+specificity = 0
+if float(confusion[0,0]+confusion[0,1])!=0:
+    specificity = float(confusion[0,0])/float(confusion[0,0]+confusion[0,1])
+#print ("Specificity: " +str(specificity))
+sensitivity = 0
+if float(confusion[1,1]+confusion[1,0])!=0:
+    sensitivity = float(confusion[1,1])/float(confusion[1,1]+confusion[1,0])
+#print ("Sensitivity: " +str(sensitivity))
+precision = 0
+if float(confusion[1,1]+confusion[0,1])!=0:
+    precision = float(confusion[1,1])/float(confusion[1,1]+confusion[0,1])
+#print ("Precision: " +str(precision))
+
+#Jaccard similarity index
+#jaccard_index = jaccard_similarity_score(y_true, y_pred, normalize=True)
+#print ("\nJaccard similarity score: " +str(jaccard_index))
+
+#F1 score
+F1_score = f1_score(y_true, y_pred, labels=None, average='binary', sample_weight=None)
+print ("\nF1 score (F-measure): " +str(F1_score))
+
+mcc= matthews_corrcoef(y_true, y_pred)
+#print ('MCC:', mcc)
+
+############################################################################################################
